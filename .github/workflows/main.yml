@@ -1,1 +1,71 @@
+name: three-tier-crud
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+env:
+    AWS_REGION: ap-southeast-2
+    EC2_HOST: ${{ secrets.EC2_HOST }}
+    EC2_KEY: ${{ secrets.EC2_KEY }}
+jobs:
+  ci: 
+    name: ci
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
 
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run tests
+        run: npm test
+      - name: awscli configure
+        run: |
+          aws configure set aws_access_key_id ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws configure set aws_secret_access_key ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws configure set region $AWS_REGION ap-southeast-2
+      - name: awc ECR login
+        uses: aws ecr get-login-password --region ap-southeast-2 | docker login --username AWS --password-stdin 851725361780.dkr.ecr.ap-southeast-2.amazonaws.com
+      - name: Build image to ECR
+        run: |
+          docker build 851725361780.dkr.ecr.ap-southeast-2.amazonaws.com/backend .
+          docker push 851725361780.dkr.ecr.ap-southeast-2.amazonaws.com/backend
+          docker build 851725361780.dkr.ecr.ap-southeast-2.amazonaws.com/frontend .
+          docker push 851725361780.dkr.ecr.ap-southeast-2.amazonaws.com/frontend
+  cd:
+    name: cd
+    needs: ci
+    runs-on: ubuntu-latest
+    steps:
+      - name: ssh to ec2 and deploy
+        uses: appleboy/ssh-action@main
+        with:
+          host: ${{ env.EC2_HOST }}
+          username: ec2-user
+          key: ${{ env.EC2_KEY }}
+      - name: awscli configure
+        run: |
+          aws configure set aws_access_key_id ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws configure set aws_secret_access_key ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws configure set region $AWS_REGION ap-southeast-2
+      - name: awc ECR login
+        uses: aws ecr get-login-password --region ap-southeast-2 | docker login --username AWS --password-stdin 851725361780.dkr.ecr.ap-southeast-2.amazonaws.com
+      - name: images pull
+        run: |
+          docker pull 851725361780.dkr.ecr.ap-southeast-2.amazonaws.com/backend
+          docker pull 851725361780.dkr.ecr.ap-southeast-2.amazonaws.com/frontend
+      - name: containers up
+        run: |
+          docker compose run -d
+      - name: old images prune
+        run: |
+          docker image prune -f    
